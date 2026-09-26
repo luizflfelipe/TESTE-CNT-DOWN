@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 
 const server = readFileSync("server.ts", "utf8");
 const motoboy = readFileSync("src/components/Motoboy.tsx", "utf8");
-const codeGs = readFileSync("apps-script/Code.gs", "utf8");
+const codeGs = readFileSync("apps-script/Controle-Motoboy-homologacao.gs", "utf8");
 
 assert.ok(
   server.includes("filterValidMotoboyRequests"),
   "backend must filter Motoboy rows without ID"
 );
 assert.ok(
-  motoboy.includes("request.id && request.status !== \"Excluído\""),
+  motoboy.includes("if (!request.id) return false;"),
   "frontend must hide Motoboy rows without ID"
 );
 assert.ok(

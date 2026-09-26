@@ -12,11 +12,24 @@ Exemplo:
 
 `https://script.google.com/macros/s/<deployment-id>/exec`
 
-Não publique `apps-script/Code.gs` no projeto de Desligados enquanto ele estiver misturando fluxos de Desligados e Motoboy.
+O arquivo legado misto foi removido. Publique somente um dos dois arquivos acima em cada projeto Apps Script.
 
 ## Propriedades Obrigatórias
 
-No projeto Apps Script de Desligados, o arquivo `Desligados-prod.gs` usa o ID da planilha em `CFG.SPREADSHEET_ID`.
+No projeto Apps Script de Desligados, abra `Configurações do projeto` > `Propriedades do script` e crie:
+
+```text
+DESLIGADOS_SPREADSHEET_ID=<id-da-planilha-de-desligados>
+REMETENTE_PLANILHA=<email-remetente-das-importacoes>
+ALERTA_BARRA_FUNDA_TO=<email-principal>
+ALERTA_BARRA_FUNDA_CC=<emails-em-copia-separados-por-virgula>
+ALERTA_BELO_HORIZONTE_TO=<email-principal>
+ALERTA_BELO_HORIZONTE_CC=<emails-em-copia-separados-por-virgula>
+ALERTA_EXTREMA_TO=<email-principal>
+ALERTA_EXTREMA_CC=<emails-em-copia-separados-por-virgula>
+```
+
+As propriedades terminadas em `_TO`, o ID e o remetente são obrigatórios. As propriedades `_CC` podem ficar vazias.
 
 No projeto Apps Script de Motoboy, abra `Configurações do projeto` > `Propriedades do script` e crie:
 

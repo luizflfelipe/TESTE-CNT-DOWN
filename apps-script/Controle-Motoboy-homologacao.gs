@@ -207,9 +207,10 @@ function doGet(e) {
 
     throw new Error("Ação GET inválida para Motoboy: " + action);
   } catch (error) {
+    console.error("Falha na consulta Motoboy: " + error.message);
     return json_({
       success: false,
-      error: error.message
+      error: "Não foi possível consultar as solicitações de Motoboy."
     });
   }
 }
@@ -244,9 +245,10 @@ function doPost(e) {
 
     throw new Error("Ação POST inválida para Motoboy: " + (payload.action || "não informada"));
   } catch (error) {
+    console.error("Falha na operação Motoboy: " + error.message);
     return json_({
       success: false,
-      error: error.message
+      error: "Não foi possível processar a operação de Motoboy."
     });
   }
 }
@@ -500,13 +502,18 @@ function setMappedField_(sheet, rowNumber, field, value) {
     throw new Error("Campo Motoboy sem coluna mapeada: " + field);
   }
 
-  sheet.getRange(rowNumber, column).setValue(value || "");
+  sheet.getRange(rowNumber, column).setValue(sanitizeSpreadsheetValue_(value || ""));
 }
 
 function appendObjectRow_(sheet, headers, rowObject) {
   var row = rowObjectToValues_(rowObject);
 
-  sheet.appendRow(row);
+  sheet.appendRow(row.map(sanitizeSpreadsheetValue_));
+}
+
+function sanitizeSpreadsheetValue_(value) {
+  if (typeof value !== "string") return value;
+  return /^[\t\r\n]|^\s*[=+\-@]/.test(value) ? "'" + value : value;
 }
 
 function valuesToRowObject_(values) {

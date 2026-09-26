@@ -11,20 +11,6 @@
  */
 
 var CFG = {
-  SPREADSHEET_ID: "1Ik_6Fr9okKUp2EiRAj0I1tE_m-u5wsGzodjAGg3GQa8",
-  EMAIL_RESPONSAVEL: "maria.sousa@dafiti.com.br",
-  EMAIL_COPIA: "erivaldo.siqueira@dafiti.com.br",
-  ALERTAS_FILIAIS: {
-    "Belo Horizonte": {
-      to: "leila.gomes@dafiti.com.br",
-      cc: "saulo.junior@dafiti.com.br,erivaldo.siqueira@dafiti.com.br"
-    },
-    "Extrema": {
-      to: "guilherme.santos@dafiti.com.br",
-      cc: "erivaldo.siqueira@dafiti.com.br"
-    }
-  },
-  REMETENTE_PLANILHA: "suporte.dafiti@dafiti.com.br",
   TIMEZONE: "GMT-3",
   MAX_THREADS: 50,
   ESTILO: {
@@ -34,6 +20,23 @@ var CFG = {
     COR_CABECALHO: "#f3f4f6"
   }
 };
+
+function requireScriptProperty_(name) {
+  var value = PropertiesService.getScriptProperties().getProperty(name);
+  if (!value || !String(value).trim()) {
+    throw new Error("Propriedade obrigatória não configurada: " + name);
+  }
+  return String(value).trim();
+}
+
+function getAlertDestination_(filial) {
+  var prefix = filial === "Barra Funda" ? "ALERTA_BARRA_FUNDA" :
+    filial === "Belo Horizonte" ? "ALERTA_BELO_HORIZONTE" : "ALERTA_EXTREMA";
+  return {
+    to: requireScriptProperty_(prefix + "_TO"),
+    cc: PropertiesService.getScriptProperties().getProperty(prefix + "_CC") || ""
+  };
+}
 
 var WEB_AUTH_MAX_SKEW_SECONDS = 300;
 var WEB_AUTH_AUDIENCE = "desligados";
@@ -165,7 +168,12 @@ function isFilialPermitida(filial) {
 }
 
 function getSpreadsheet() {
-  return SpreadsheetApp.openById(CFG.SPREADSHEET_ID);
+  return SpreadsheetApp.openById(requireScriptProperty_("DESLIGADOS_SPREADSHEET_ID"));
+}
+
+function sanitizeSpreadsheetText_(value) {
+  if (typeof value !== "string") return value;
+  return /^[\t\r\n]|^\s*[=+\-@]/.test(value) ? "'" + value : value;
 }
 
 function nowDateStr() {
@@ -668,8 +676,7 @@ function doGet(e) {
   } catch (err) {
     return ContentService.createTextOutput(JSON.stringify({
       success: false,
-      error: err.message,
-      stack: err.stack
+      error: "Não foi possível consultar os dados do dashboard."
     })).setMimeType(ContentService.MimeType.JSON);
   }
 }
@@ -697,8 +704,6 @@ function doPost(e) {
 
     // A falha no Slack não pode desfazer o cadastro já salvo.
     var slackEnviado = false;
-    var erroSlack = null;
-
     try {
       notificarNovoColaboradorSlack({
         colaborador: contents.colaborador,
@@ -713,21 +718,19 @@ function doPost(e) {
 
       slackEnviado = true;
     } catch (erro) {
-      erroSlack = erro.toString();
-      console.error("Cadastro salvo, mas a notificação Slack falhou: " + erroSlack);
+      console.error("Cadastro salvo, mas a notificação Slack falhou.");
     }
 
     return ContentService.createTextOutput(JSON.stringify({
       success: true,
       colaborador: contents.colaborador || null,
       registroSalvo: registroSalvo || null,
-      slackEnviado: slackEnviado,
-      erroSlack: erroSlack
+      slackEnviado: slackEnviado
     })).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return ContentService.createTextOutput(JSON.stringify({
       success: false,
-      error: err.toString()
+      error: "Não foi possível registrar o desligamento."
     })).setMimeType(ContentService.MimeType.JSON);
   }
 }
@@ -808,15 +811,8 @@ function notificarNovoColaboradorSlack(dados) {
   });
 
   var status = resposta.getResponseCode();
-  var corpoResposta = resposta.getContentText();
-
   if (status < 200 || status >= 300) {
-    throw new Error(
-      "Falha ao enviar notificação ao Slack. HTTP " +
-      status +
-      ": " +
-      corpoResposta
-    );
+    throw new Error("Falha ao enviar notificação ao Slack. HTTP " + status);
   }
 
   console.log(
@@ -891,21 +887,21 @@ function registrarNaPlanilha(contents) {
       var idxMaju = getIdx(["controle maju"], 7);
       var idxEquips = getIdx(["equipamento(s) e quantidade", "equipamentos e quantidade"], 8);
 
-      existing[idxColaborador] = contents.colaborador || existing[idxColaborador];
-      if (contents.cargo) existing[idxCargo] = contents.cargo;
-      if (isTextoVazio(existing[idxDesligamento])) existing[idxDesligamento] = contents.desligamento || "";
-      if (contents.filial) existing[idxFilial] = contents.filial;
+      existing[idxColaborador] = sanitizeSpreadsheetText_(contents.colaborador) || existing[idxColaborador];
+      if (contents.cargo) existing[idxCargo] = sanitizeSpreadsheetText_(contents.cargo);
+      if (isTextoVazio(existing[idxDesligamento])) existing[idxDesligamento] = sanitizeSpreadsheetText_(contents.desligamento) || "";
+      if (contents.filial) existing[idxFilial] = sanitizeSpreadsheetText_(contents.filial);
       if (isFromEmail || isTextoVazio(existing[idxEmail])) {
-        existing[idxEmail] = contents.email || existing[idxEmail];
+        existing[idxEmail] = sanitizeSpreadsheetText_(contents.email) || existing[idxEmail];
       }
 
       if (normalizarTexto(novoStatusDev) === "devolvido" || normalizarTexto(novoStatusDev) === "desligamento") {
         if (veioDoPortal && isTextoVazio(existing[idxRecebido])) {
           existing[idxRecebido] = nowDateStr();
         }
-        existing[idxEquipDev] = novoStatusDev;
+        existing[idxEquipDev] = sanitizeSpreadsheetText_(novoStatusDev);
         existing[idxMaju] = "Entregue";
-        existing[idxEquips] = obs;
+        existing[idxEquips] = sanitizeSpreadsheetText_(obs);
       }
 
       var range = sheet.getRange(encontrada.linha, 1, 1, 9);
@@ -918,15 +914,15 @@ function registrarNaPlanilha(contents) {
         : ensureMonthSheet(ss, new Date());
 
       var rowData = [[
-        contents.colaborador || "",
-        contents.cargo || "",
-        contents.desligamento || "",
+        sanitizeSpreadsheetText_(contents.colaborador) || "",
+        sanitizeSpreadsheetText_(contents.cargo) || "",
+        sanitizeSpreadsheetText_(contents.desligamento) || "",
         veioDoPortal && normalizarTexto(novoStatusDev) === "devolvido" ? nowDateStr() : "",
-        contents.filial || "",
-        contents.email || "",
-        novoStatusDev,
-        novoStatusMaju,
-        obs
+        sanitizeSpreadsheetText_(contents.filial) || "",
+        sanitizeSpreadsheetText_(contents.email) || "",
+        sanitizeSpreadsheetText_(novoStatusDev),
+        sanitizeSpreadsheetText_(novoStatusMaju),
+        sanitizeSpreadsheetText_(obs)
       ]];
 
       var nextRow = sheetAtual.getLastRow() + 1;
@@ -941,7 +937,7 @@ function registrarNaPlanilha(contents) {
 }
 
 function processarEmailsRecebidos() {
-  var query = "from:" + CFG.REMETENTE_PLANILHA + " has:attachment is:unread filename:(xlsx OR xls OR csv)";
+  var query = "from:" + requireScriptProperty_("REMETENTE_PLANILHA") + " has:attachment is:unread filename:(xlsx OR xls OR csv)";
   var threads = GmailApp.search(query, 0, CFG.MAX_THREADS);
 
   if (!threads || threads.length === 0) return;
@@ -1089,9 +1085,7 @@ function enviarAlertasPrioridadeAlta() {
     var pendencias = pendenciasAltas.filter(function (p) { return p.filial === filial; });
     if (!pendencias.length) return;
     pendencias.sort(function (a, b) { return b.dias - a.dias; });
-    var destino = filial === "Barra Funda"
-      ? { to: CFG.EMAIL_RESPONSAVEL, cc: CFG.EMAIL_COPIA }
-      : CFG.ALERTAS_FILIAIS[filial];
+    var destino = getAlertDestination_(filial);
     var html = '<div style="font-family:Arial,sans-serif;max-width:650px;margin:auto;border:1px solid #1e293b;border-radius:12px;overflow:hidden;background:#fff">' +
       '<div style="background:#020617;padding:30px 20px;text-align:center;border-bottom:4px solid #f97316">' +
       '<h1 style="color:#fff;font-size:20px"><span style="color:#f97316">ALERTA</span> DE PENDÊNCIAS</h1>' +

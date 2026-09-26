@@ -16,7 +16,8 @@ import {
   Check,
   FileDown,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  LogIn
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { DashboardSummaryResponse, DashboardFilialData, FilialType } from '../types/dashboard';
@@ -28,9 +29,10 @@ import { FILIAIS, resolveActiveBranchData } from '../utils/dashboardBranchResolv
 interface DashboardProps {
   onBack: () => void;
   userEmail?: string;
+  onUnauthorized?: () => void;
 }
 
-export default function Dashboard({ onBack, userEmail }: DashboardProps) {
+export default function Dashboard({ onBack, userEmail, onUnauthorized }: DashboardProps) {
   const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
   const [selectedFilial, setSelectedFilial] = useState<FilialType>('Todas');
   const [selectedMonth, setSelectedMonth] = useState<string>(ALL_MONTHS);
@@ -91,6 +93,12 @@ export default function Dashboard({ onBack, userEmail }: DashboardProps) {
       });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          if (onUnauthorized) {
+            onUnauthorized();
+            return;
+          }
+        }
         const errorJson = await response.json().catch(() => null);
         throw new Error(errorJson?.message || errorJson?.error || 'O Google Drive está temporariamente instável. Tente novamente em instantes.');
       }
@@ -195,6 +203,11 @@ export default function Dashboard({ onBack, userEmail }: DashboardProps) {
         ? 'A sincronização com o Google Drive excedeu o tempo limite. Os dados exibidos continuam preservados.'
         : (err?.message || 'Erro ao carregar o dashboard.');
 
+      if (err?.message?.includes('Não autenticado') && onUnauthorized) {
+        onUnauthorized();
+        return;
+      }
+
       console.error('[Dashboard] Falha ao carregar dados:', errorMessage);
 
       if (summary) {
@@ -281,6 +294,7 @@ export default function Dashboard({ onBack, userEmail }: DashboardProps) {
 
   if (error && !summary) {
     const isTimeout = error.toLowerCase().includes('timeout') || error.toLowerCase().includes('tempo limite') || error.toLowerCase().includes('20 segundos');
+    const isUnauthenticated = error.toLowerCase().includes('não autenticado') || error.toLowerCase().includes('autentic');
 
     return (
       <div className="min-h-screen bg-background text-foreground flex flex-col items-center justify-center p-6 font-sans text-center">
@@ -289,18 +303,32 @@ export default function Dashboard({ onBack, userEmail }: DashboardProps) {
             <AlertCircle className="w-8 h-8" />
           </div>
           <h2 className="text-foreground text-xl font-bold mb-3">
-            {isTimeout ? 'Tempo Limite Atingido' : 'Erro ao Carregar o Painel'}
+            {isUnauthenticated ? 'Sessão Não Autenticada' : isTimeout ? 'Tempo Limite Atingido' : 'Erro ao Carregar o Painel'}
           </h2>
           <p className="text-muted-foreground text-sm mb-6 leading-relaxed">{error}</p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <button 
-              type="button"
-              onClick={() => fetchData(false)} 
-              className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-bold flex items-center justify-center gap-2 transition-colors text-sm cursor-pointer shadow-md shadow-primary/20"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Tentar novamente
-            </button>
+            {isUnauthenticated ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (onUnauthorized) onUnauthorized();
+                  else onBack();
+                }}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-bold flex items-center justify-center gap-2 transition-colors text-sm cursor-pointer shadow-md shadow-primary/20"
+              >
+                <LogIn className="w-4 h-4" />
+                Fazer Login
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fetchData(false)}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-bold flex items-center justify-center gap-2 transition-colors text-sm cursor-pointer shadow-md shadow-primary/20"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Tentar novamente
+              </button>
+            )}
             <button 
               type="button"
               onClick={onBack} 

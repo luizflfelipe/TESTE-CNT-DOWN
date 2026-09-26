@@ -1,11 +1,17 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 
 function readEnvValue(name) {
-  const env = readFileSync(".env", "utf8");
-  const line = env.split(/\r?\n/).find((entry) => entry.startsWith(`${name}=`));
-  return line ? line.slice(name.length + 1).trim() : "";
+  if (existsSync(".env")) {
+    const env = readFileSync(".env", "utf8");
+    const line = env.split(/\r?\n/).find((entry) => entry.startsWith(`${name}=`));
+    if (line) return line.slice(name.length + 1).trim();
+  }
+  if (process.env[name] && process.env[name].trim()) {
+    return process.env[name].trim();
+  }
+  return "";
 }
 
 const scriptUrl = readEnvValue("GOOGLE_SCRIPT_URL");
@@ -25,7 +31,7 @@ url.searchParams.set("authTimestamp", timestamp);
 url.searchParams.set("authNonce", nonce);
 url.searchParams.set("authSignature", signature);
 
-const response = await fetch(url);
+const response = await fetch(url, { redirect: "follow" });
 const text = await response.text();
 
 let payload;

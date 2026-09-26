@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 
-const codeGs = readFileSync("apps-script/Code.gs", "utf8");
+const codeGs = readFileSync("apps-script/Controle-Motoboy-homologacao.gs", "utf8");
 const types = readFileSync("src/types/motoboy.ts", "utf8");
 const ui = readFileSync("src/components/Motoboy.tsx", "utf8");
 
@@ -11,12 +11,12 @@ assert.ok(
 );
 
 assert.ok(
-  codeGs.includes('rowObject["Status"] = "Pendente de recebimento";'),
+  codeGs.includes('rowObject.status = "Pendente de recebimento";'),
   "Apps Script must set Pendente de recebimento"
 );
 
 assert.ok(
-  codeGs.includes('data.enviado === "Sim"') && codeGs.includes('data.recebido === "Não"'),
+  codeGs.includes('isSim_(data.enviado)') && codeGs.includes('isNao_(data.recebido)'),
   "Apps Script must detect sent but not received case explicitly"
 );
 

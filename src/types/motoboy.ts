@@ -15,7 +15,6 @@ export interface MotoboyEvent {
   requestId: string;
   eventType: MotoboyEventType;
   actor: string;
-  payload: any;
   createdAt: string;
 }
 

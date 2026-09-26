@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
 import cookieSession from "cookie-session";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 import { normalizeDashboardSummary } from "./src/utils/dashboardData";
@@ -325,8 +325,16 @@ async function fetchGoogleScriptJson<T = any>(
     }
   }
 
-  const detailMsg = lastText ? `Última resposta: ${lastText.slice(0, 300)}` : `Motivo: ${lastError?.message || "Sem resposta recebida"}`;
-  console.warn(`[GoogleScript Warning] Falha final ao comunicar com Google Script após retries. ${detailMsg}`);
+  console.warn(`[GoogleScript Warning] Falha final ao comunicar com Google Script após retries. Motivo: ${lastError?.message || "resposta inválida"}`);
+
+  const is404 = lastError?.message?.includes("404") ||
+                lastText?.includes("Page Not Found") ||
+                lastText?.includes("Sorry, unable to open the file at this time");
+
+  if (is404) {
+    throw new Error("A URL do Google Apps Script (GOOGLE_SCRIPT_URL) retornou Erro 404 no Google Drive. Verifique se a implantação está ativa e configurada com acesso para 'Qualquer pessoa'.");
+  }
+
   throw new Error(
     lastError?.message?.includes("HTML") || lastError?.message?.includes("Unexpected token '<'")
       ? "O Google Drive está temporariamente instável. Por favor, tente novamente em instantes."
@@ -390,6 +398,25 @@ function requireAppsScriptSharedSecret(env: NodeJS.ProcessEnv): string {
     throw new Error("APPS_SCRIPT_SHARED_SECRET must be configured with at least 32 characters.");
   }
   return secret;
+}
+
+function requirePassword(env: NodeJS.ProcessEnv, name: "TI_PASSWORD" | "RECEPTION_PASSWORD" | "MARIA_PASSWORD"): string {
+  const password = env[name]?.trim();
+  if (!password || password.length < 12) {
+    throw new Error(`${name} must be configured with at least 12 characters.`);
+  }
+  return password;
+}
+
+function getTrustedProxyHops(env: NodeJS.ProcessEnv): false | number {
+  const rawValue = env.TRUST_PROXY_HOPS?.trim();
+  if (!rawValue) return false;
+
+  const hops = Number(rawValue);
+  if (!Number.isInteger(hops) || hops < 1 || hops > 10) {
+    throw new Error("TRUST_PROXY_HOPS must be an integer between 1 and 10.");
+  }
+  return hops;
 }
 
 function stableStringify(value: unknown): string {
@@ -556,32 +583,28 @@ async function startServer() {
   const PORT = 3000;
   const sessionSecret = requireSessionSecret(process.env);
   requireAppsScriptSharedSecret(process.env);
+  const authPasswords = {
+    ti: requirePassword(process.env, "TI_PASSWORD"),
+    reception: requirePassword(process.env, "RECEPTION_PASSWORD"),
+    maria: requirePassword(process.env, "MARIA_PASSWORD"),
+  };
 
-  // Informa ao Express que ele está rodando atrás de um proxy reverso (Cloud Run / Nginx) 
-  // Isso resolve os avisos de segurança (X-Forwarded-For) no rateLimiter e padroniza a coleta de IP real.
-  app.set("trust proxy", 1);
+  // Confia somente na quantidade explicitamente configurada de proxies reversos.
+  app.set("trust proxy", getTrustedProxyHops(process.env));
 
   app.use(express.json({ limit: "50kb" })); // Trava global de tamanho de requisição para evitar ataques de estouro de payload
   app.use(cookieSession({
     name: 'session',
     keys: [sessionSecret],
     ...getSessionCookieOptions(process.env),
+    maxAge: 24 * 60 * 60 * 1000,
   }));
-
-  // Suporte dinâmico para HTTPS / iframes do AI Studio
-  app.use((req, res, next) => {
-    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
-    if (isHttps && (req as any).sessionOptions) {
-      (req as any).sessionOptions.secure = true;
-      (req as any).sessionOptions.sameSite = 'none';
-    }
-    next();
-  });
 
   // Bloqueio de Brute Force Limitando a Rota de Login (max 10 tentavias / 15 min)
   const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, 
     max: 10,
+    validate: { trustProxy: false, xForwardedForHeader: false },
     message: { success: false, message: 'Muitas tentativas de login. Por questões de segurança, aguarde alguns minutos e tente novamente.' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -591,27 +614,24 @@ async function startServer() {
   app.post('/api/auth/login', loginLimiter, (req, res) => {
     const { password } = req.body;
     
-    const tiPassword = process.env.TI_PASSWORD;
-    const receptionPassword = process.env.RECEPTION_PASSWORD;
-    const mariaPassword = process.env.MARIA_PASSWORD;
-
-    // Definição das contas de acesso e suas senhas (agora puxadas do .env)
+    // As credenciais são validadas uma única vez durante a inicialização.
     const validLogins = [
       {
-        password: tiPassword,
+        password: authPasswords.ti,
         user: { name: 'Administrador TI', email: 'suporte.dafiti@dafiti.com.br', picture: '' }
       },
       {
-        password: receptionPassword,
+        password: authPasswords.reception,
         user: { name: 'Recepção', email: 'recepcao@dafiti.com.br', picture: '' }
       },
       {
-        password: mariaPassword,
+        password: authPasswords.maria,
         user: { name: 'Maria Julia Sousa', email: 'maria.sousa@dafiti.com.br', picture: '' }
       }
-    ].filter((login) => Boolean(login.password));
+    ];
 
-    const matchedLogin = validLogins.find(login => login.password === password);
+    const inputPassword = typeof password === 'string' ? password.trim() : '';
+    const matchedLogin = validLogins.find(login => login.password === inputPassword);
 
     if (matchedLogin) {
       console.log(`[AUTH] Login bem-sucedido para: ${matchedLogin.user.name}`);
@@ -777,7 +797,13 @@ async function startServer() {
     windowMs: 5 * 60 * 1000,
     max: 30,
     skip: (req) => !isManualDashboardRefresh(req),
-    keyGenerator: (req: any) => String(req.session?.user?.email || req.ip || "user").toLowerCase(),
+    keyGenerator: (req: any) => {
+      if (req.session?.user?.email) {
+        return String(req.session.user.email).toLowerCase();
+      }
+      return ipKeyGenerator(req.ip || "127.0.0.1");
+    },
+    validate: { trustProxy: false, keyGeneratorIpFallback: false, xForwardedForHeader: false },
     message: {
       success: false,
       error: "Limite de atualizações manuais atingido. Aguarde alguns instantes.",
@@ -808,16 +834,21 @@ async function startServer() {
       } catch (fetchErr: any) {
         console.warn("[DASHBOARD] Instabilidade ao consultar Google Apps Script diretamente:", fetchErr.message);
 
+        const is404 = fetchErr.message?.includes("404") || fetchErr.message?.includes("GOOGLE_SCRIPT_URL");
         return res.status(503).json({
           success: false,
           available: false,
-          error: "Dados do Dashboard temporariamente indisponíveis no Google Sheets.",
-          message: "O Google Drive está temporariamente instável. Clique em 'Verificar Novamente' para tentar outra vez."
+          error: is404
+            ? "URL do Google Apps Script não encontrada (Erro 404 no Google Drive)."
+            : "Dados do Dashboard temporariamente indisponíveis no Google Sheets.",
+          message: is404
+            ? "A URL do Google Apps Script retornou Erro 404 (Página não encontrada no Google Drive). Verifique em 'Gerenciar Implantações' na planilha se a URL mudou ou se o acesso está configurado como 'Qualquer pessoa'."
+            : "O Google Drive está temporariamente instável. Clique em 'Verificar Novamente' para tentar outra vez."
         });
       }
     } catch (error: any) {
       console.error("Error fetching dashboard data:", error);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Não foi possível consultar os dados do dashboard." });
     }
   });
 
@@ -857,35 +888,7 @@ async function startServer() {
         return res.status(400).json({ error: error.issues[0].message });
       }
       
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/fetch-external-data", requireAuth, async (req, res) => {
-    try {
-      const { url } = req.query;
-      if (!url) throw new Error("URL da planilha não fornecida.");
-
-      if (!process.env.GOOGLE_SCRIPT_URL) {
-        throw new Error("Google Script URL not configured.");
-      }
-
-      const result = await fetchGoogleScriptJson(() =>
-        createSignedAppsScriptGetRequest(
-          process.env.GOOGLE_SCRIPT_URL!,
-          "desligados",
-          "fetchExternal",
-          { url: String(url) }
-        )
-      );
-
-      if (!result.success) {
-        throw new Error(result.error || "Erro ao buscar dados externos.");
-      }
-
-      res.json(result.data);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Não foi possível registrar o desligamento." });
     }
   });
 
@@ -941,7 +944,8 @@ async function startServer() {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.issues[0].message });
       }
-      res.status(500).json({ error: error.message });
+      console.error("[MOTOBOY_CREATE] Falha ao criar solicitação:", error?.message || "erro desconhecido");
+      res.status(500).json({ error: "Não foi possível criar a solicitação de Motoboy." });
     }
   });
 
@@ -958,12 +962,12 @@ async function startServer() {
       const validViews = ["pendentes", "concluidas", "excluidas"];
       const view = validViews.includes(rawView) ? rawView : "pendentes";
 
-      // Validação de autorização por view: recepção não pode consultar concluídas
-      if (role === "recepcao" && view === "concluidas") {
+      // Recepção acessa somente solicitações ainda pendentes.
+      if (role === "recepcao" && view !== "pendentes") {
         return res.status(403).json({
           success: false,
           role,
-          message: "Perfil Recepção não tem permissão para consultar solicitações concluídas."
+          message: "Perfil Recepção não tem permissão para consultar esta visualização."
         });
       }
 
@@ -1039,7 +1043,8 @@ async function startServer() {
 
       res.json({ success: true, role, requests: filteredRequests });
     } catch (error: any) {
-      res.status(500).json({ success: false, role, message: error.message || "Erro ao listar solicitações de Motoboy." });
+      console.error("[MOTOBOY_LIST] Falha ao listar solicitações:", error?.message || "erro desconhecido");
+      res.status(500).json({ success: false, role, message: "Não foi possível listar as solicitações de Motoboy." });
     }
   });
 
@@ -1054,12 +1059,25 @@ async function startServer() {
         return res.json({ success: true, events: [] });
       }
 
-      const id = req.params.id;
+      const id = z.string().min(1, "ID da solicitação é obrigatório").parse(req.params.id);
       const supabase = getSupabaseClient() as any;
+
+      const { data: request, error: requestError } = await supabase
+        .from("motoboy_requests")
+        .select("id,status")
+        .eq("id", id)
+        .single();
+
+      if (requestError || !request) {
+        return res.status(404).json({ error: "Solicitação de Motoboy não encontrada." });
+      }
+      if (role === "recepcao" && ["Concluído", "Excluído"].includes(request.status)) {
+        return res.status(403).json({ error: "Perfil Recepção não tem permissão para consultar este histórico." });
+      }
       
       const { data, error } = await supabase
         .from("motoboy_request_events")
-        .select("*")
+        .select("id,request_id,event_type,actor,created_at")
         .eq("request_id", id)
         .order("created_at", { ascending: false });
 
@@ -1070,13 +1088,16 @@ async function startServer() {
         requestId: row.request_id,
         eventType: row.event_type,
         actor: row.actor,
-        payload: row.payload,
         createdAt: row.created_at
       }));
 
       res.json({ success: true, events });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.issues[0].message });
+      }
+      console.error("[MOTOBOY_EVENTS] Falha ao consultar histórico:", error?.message || "erro desconhecido");
+      res.status(500).json({ error: "Não foi possível consultar o histórico de Motoboy." });
     }
   });
 
@@ -1135,7 +1156,8 @@ async function startServer() {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.issues[0].message });
       }
-      res.status(500).json({ error: error.message });
+      console.error("[MOTOBOY_UPDATE] Falha ao atualizar solicitação:", error?.message || "erro desconhecido");
+      res.status(500).json({ error: "Não foi possível atualizar a solicitação de Motoboy." });
     }
   });
 
@@ -1208,7 +1230,8 @@ async function startServer() {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.issues[0].message });
       }
-      res.status(500).json({ error: error.message });
+      console.error("[MOTOBOY_DELETE] Falha ao excluir solicitação:", error?.message || "erro desconhecido");
+      res.status(500).json({ error: "Não foi possível excluir a solicitação de Motoboy." });
     }
   });
 

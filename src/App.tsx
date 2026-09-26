@@ -140,6 +140,13 @@ export default function App() {
     handleLogout();
     };
 
+  const handleUnauthorized = () => {
+    setUser(null);
+    setView('form');
+    setMotoboyPendingCount(0);
+    setAuthError("Sua sessão expirou ou não está autenticada. Faça login para continuar.");
+  };
+
   const toggleEquipamento = (id: string) => {
     setEquipamentos(prev => {
       const exists = prev.find(e => e.id === id);
@@ -200,6 +207,11 @@ export default function App() {
         // A planilha nunca substituirá nada porque o "email" sequer será transmitido.
         body: JSON.stringify(basePayload),
       });
+
+      if (response.status === 401) {
+        handleUnauthorized();
+        return;
+      }
 
       const result = await response.json();
 
@@ -363,6 +375,7 @@ export default function App() {
               userEmail={user?.email}
               onPendingCountChange={setMotoboyPendingCount}
               onBack={() => setView('form')}
+              onUnauthorized={handleUnauthorized}
             />
           </ErrorBoundary>
         </motion.div>
@@ -375,7 +388,11 @@ export default function App() {
           className="min-h-screen bg-background text-foreground"
         >
           <ErrorBoundary fallbackTitle="Falha ao carregar Dashboard" onReset={() => setView('form')}>
-            <Dashboard onBack={() => setView('form')} userEmail={user?.email} />
+            <Dashboard
+              onBack={() => setView('form')}
+              userEmail={user?.email}
+              onUnauthorized={handleUnauthorized}
+            />
           </ErrorBoundary>
         </motion.div>
       ) : (

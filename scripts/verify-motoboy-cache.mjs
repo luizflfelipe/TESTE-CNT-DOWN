@@ -30,16 +30,16 @@ function runCheck() {
   assert(/MOTOBOY_CACHE_TTL/.test(serverTs), "Deve existir uma variável TTL para o cache Motoboy.");
   
   // Verifica separação por role no GET
-  assert(/motoboyCache\[role\]/.test(serverTs), "O cache Motoboy deve ser separado por role (ex: motoboyCache[role]).");
+  assert(/const\s+cacheKey\s*=\s*`\$\{role\}_\$\{view\}`/.test(serverTs), "O cache Motoboy deve ser separado por role e visualização.");
   
   const getRouteIndex = serverTs.indexOf('app.get("/api/motoboy/requests"');
   if (getRouteIndex === -1) {
     console.error("❌ Rota GET /api/motoboy/requests não encontrada.");
     passed = false;
   } else {
-    const getRouteSnippet = serverTs.substring(getRouteIndex, getRouteIndex + 1000);
-    assert(/motoboyCache\[role\]/.test(getRouteSnippet), "O cache deve ser verificado na rota GET /api/motoboy/requests.");
-    assert(/timestamp/.test(getRouteSnippet) && /requests:/.test(getRouteSnippet), "O GET deve retornar os requests em cache no mesmo formato.");
+    const getRouteSnippet = serverTs.substring(getRouteIndex, getRouteIndex + 2500);
+    assert(/motoboyCache\[cacheKey\]/.test(getRouteSnippet), "O cache deve ser verificado pela chave de role e visualização na rota GET.");
+    assert(/cached\.timestamp/.test(getRouteSnippet) && /requests:\s*cached\.requests/.test(getRouteSnippet), "O GET deve retornar os requests em cache no mesmo formato.");
   }
 
   // Verifica invalidação após POST, PATCH e DELETE
@@ -65,18 +65,6 @@ function runCheck() {
     assert(/clearMotoboyCache\(\)/.test(snippet) || /motoboyCache\s*=\s*{}/.test(snippet), "Deve invalidar o cache na rota DELETE /api/motoboy/requests/:id.");
   } else {
     assert(false, "Rota DELETE /api/motoboy/requests/:id não encontrada.");
-  }
-
-  const codeGsPath = path.resolve(__dirname, '../apps-script/Code.gs');
-  const codeGs = fs.existsSync(codeGsPath) ? fs.readFileSync(codeGsPath, 'utf8') : '';
-  
-  if (codeGs) {
-    const listMotoboyIndex = codeGs.indexOf('function listMotoboyRequests_');
-    if (listMotoboyIndex > -1) {
-      const snippet = codeGs.substring(listMotoboyIndex, listMotoboyIndex + 1000);
-      assert(!/getDataRange\(\)\.getValues\(\)/.test(snippet), "A listagem em Code.gs não deve usar getDataRange().getValues() para Motoboy.");
-    }
-    assert(/function readMotoboyDataRange_/.test(codeGs), "Deve existir uma função auxiliar readMotoboyDataRange_ em Code.gs.");
   }
 
   const homologacaoGsPath = path.resolve(__dirname, '../apps-script/Controle-Motoboy-homologacao.gs');

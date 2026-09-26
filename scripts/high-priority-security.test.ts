@@ -154,6 +154,9 @@ before(async () => {
       APPS_SCRIPT_SHARED_SECRET: SHARED_SECRET,
       GOOGLE_SCRIPT_URL: `http://127.0.0.1:${upstreamPort}/exec`,
       TI_PASSWORD: "test-ti-password",
+      RECEPTION_PASSWORD: "test-reception-password",
+      MARIA_PASSWORD: "test-maria-password",
+      TRUST_PROXY_HOPS: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -235,10 +238,27 @@ for (const file of [
   });
 }
 
+test("spreadsheet sinks neutralize formula-leading text and preserve ordinary values", () => {
+  const desligados = createAppsScriptSandbox("apps-script/Desligados-prod.gs");
+  const motoboy = createAppsScriptSandbox("apps-script/Controle-Motoboy-homologacao.gs");
+
+  for (const [input, expected] of [
+    ["=IMPORTDATA(\"https://example.invalid\")", "'=IMPORTDATA(\"https://example.invalid\")"],
+    ["  +1+1", "'  +1+1"],
+    ["@SUM(A1:A2)", "'@SUM(A1:A2)"],
+    ["\tmalicious", "'\tmalicious"],
+    ["Texto normal", "Texto normal"],
+  ]) {
+    assert.equal(desligados.sanitizeSpreadsheetText_(input), expected);
+    assert.equal(motoboy.sanitizeSpreadsheetValue_(input), expected);
+  }
+});
+
 test("the Motoboy maintenance action is not exposed through doGet", () => {
   const sandbox = createAppsScriptSandbox("apps-script/Controle-Motoboy-homologacao.gs");
   const result = sandbox.doGet(signedGetEvent("motoboy", "setupMotoboySheet"));
   const body = JSON.parse(result.text);
   assert.equal(body.success, false);
-  assert.match(body.error, /inválida/i);
+  assert.equal(body.error, "Não foi possível consultar as solicitações de Motoboy.");
+  assert.doesNotMatch(body.error, /setupMotoboySheet|inválida/i);
 });

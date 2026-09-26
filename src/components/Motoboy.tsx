@@ -11,6 +11,7 @@ interface MotoboyProps {
   userEmail?: string;
   onPendingCountChange: (count: number) => void;
   onBack?: () => void;
+  onUnauthorized?: () => void;
 }
 
 const initialCreateForm: MotoboyCreatePayload = {
@@ -98,7 +99,7 @@ function tabToViewParam(tab: MotoboyTab): string {
   }
 }
 
-export default function Motoboy({ userEmail, onPendingCountChange, onBack }: MotoboyProps) {
+export default function Motoboy({ userEmail, onPendingCountChange, onBack, onUnauthorized }: MotoboyProps) {
   const [role, setRole] = useState<MotoboyRole>("none");
   const [requests, setRequests] = useState<MotoboyRequest[]>([]);
   const [selectedRequestId, setSelectedRequestId] = useState("");
@@ -168,6 +169,12 @@ export default function Motoboy({ userEmail, onPendingCountChange, onBack }: Mot
     try {
       const viewParam = tabToViewParam(targetTab);
       const response = await fetch(`/api/motoboy/requests?view=${encodeURIComponent(viewParam)}`);
+      if (response.status === 401) {
+        if (onUnauthorized) {
+          onUnauthorized();
+          return;
+        }
+      }
       const result = await readJsonResponse(response, "Erro ao carregar solicitações de Motoboy.");
       if (!response.ok) throw new Error(result.error || "Erro ao carregar solicitações de Motoboy.");
       const nextRequests: MotoboyRequest[] = result.requests || [];
@@ -175,6 +182,10 @@ export default function Motoboy({ userEmail, onPendingCountChange, onBack }: Mot
       setRequests(nextRequests);
       onPendingCountChange(nextRequests.filter((request) => request.status !== "Concluído" && request.status !== "Excluído").length);
     } catch (error: any) {
+      if (error?.message?.includes('Não autenticado') && onUnauthorized) {
+        onUnauthorized();
+        return;
+      }
       setMessage({ type: "error", text: error.message });
     } finally {
       isFetchingRef.current = false;

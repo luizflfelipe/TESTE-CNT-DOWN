@@ -14,10 +14,11 @@ export function requireSessionSecret(env: NodeJS.ProcessEnv): string {
 
 export function getSessionCookieOptions(env: NodeJS.ProcessEnv) {
   const isProd = env.NODE_ENV === "production";
+  const allowThirdPartyCookies = env.EMBED_THIRD_PARTY_COOKIES === "true";
   return {
-    secure: isProd,
-    sameSite: "lax" as const,
+    secure: isProd || allowThirdPartyCookies,
+    sameSite: allowThirdPartyCookies ? "none" as const : "lax" as const,
     httpOnly: true as const,
+    ...(allowThirdPartyCookies ? { partitioned: true as const } : {}),
   };
 }
-
