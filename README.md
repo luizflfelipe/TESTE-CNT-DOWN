@@ -44,7 +44,11 @@ Este sistema foi construído sobre uma base Full-Stack performática, contando c
 *   **Backend Node:** Node.js + Express (Integrações e Escudo Intermediário)
 *   **Banco de Dados & Scripting:** Google Sheets + Google Apps Script (Advanced v3 Services)
 *   **Segurança:** Schema Validation via Zod, Session Cookies.
-*   **Deploy Cloud:** Vercel (Frontend Preview) e Render (Produção de Alta Disponibilidade)
+*   **Deploy Cloud:** Google AI Studio Shared App (Cloud Run)
+
+### Sessão no Shared App
+
+Configure `SESSION_SECRET` (mínimo de 32 caracteres), as três senhas do app (mínimo de 12 caracteres cada) e `EMBED_THIRD_PARTY_COOKIES=true` no ambiente do servidor do Shared App. O último ajuste permite que o cookie de sessão funcione quando o app é aberto dentro do Google AI Studio. No Cloud Run, o app reconhece automaticamente um proxy de entrada; `TRUST_PROXY_HOPS=1` pode ser definido de forma explícita. Após alterar essas variáveis ou o código, publique uma nova versão do Shared App e faça login novamente. O arquivo `.env` local não altera a configuração da versão já publicada.
 
 ---
 

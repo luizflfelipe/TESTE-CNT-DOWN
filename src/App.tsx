@@ -70,6 +70,7 @@ export default function App() {
       try {
         const response = await fetch('/api/auth/status', {
           credentials: 'same-origin',
+          cache: 'no-store',
         });
         const data = await response.json();
         if (!cancelled) {
@@ -109,7 +110,19 @@ export default function App() {
       const data = await resp.json();
       
       if (resp.ok && data.success) {
-        setUser(data.user);
+        const statusResponse = await fetch('/api/auth/status', {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (!statusResponse.ok) {
+          throw new Error('Não foi possível confirmar a sessão.');
+        }
+        const session = await statusResponse.json();
+        if (session.authenticated && session.user) {
+          setUser(session.user);
+        } else {
+          setAuthError('Login aceito, mas o navegador não manteve a sessão. Verifique a configuração de cookies do Shared App.');
+        }
       } else {
         setAuthError(data.message || "Senha incorreta.");
       }

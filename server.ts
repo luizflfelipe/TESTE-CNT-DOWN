@@ -410,7 +410,9 @@ function requirePassword(env: NodeJS.ProcessEnv, name: "TI_PASSWORD" | "RECEPTIO
 
 function getTrustedProxyHops(env: NodeJS.ProcessEnv): false | number {
   const rawValue = env.TRUST_PROXY_HOPS?.trim();
-  if (!rawValue) return false;
+  // Cloud Run encerra TLS antes do contêiner e encaminha a requisição por HTTP.
+  // Seu proxy de entrada precisa ser confiável para que cookies Secure sejam emitidos.
+  if (!rawValue) return env.K_SERVICE ? 1 : false;
 
   const hops = Number(rawValue);
   if (!Number.isInteger(hops) || hops < 1 || hops > 10) {

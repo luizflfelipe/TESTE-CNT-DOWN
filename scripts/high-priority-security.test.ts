@@ -156,7 +156,9 @@ before(async () => {
       TI_PASSWORD: "test-ti-password",
       RECEPTION_PASSWORD: "test-reception-password",
       MARIA_PASSWORD: "test-maria-password",
-      TRUST_PROXY_HOPS: "1",
+      K_SERVICE: "aistudio-shared-app-test",
+      TRUST_PROXY_HOPS: "",
+      EMBED_THIRD_PARTY_COOKIES: "true",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -186,7 +188,15 @@ test("an authenticated Express request signs the Google Apps Script request", as
   assert.equal(login.status, 200);
   const setCookies = login.headers.getSetCookie();
   assert.ok(setCookies.length >= 2);
+  assert.ok(setCookies.every((value) => /; secure/i.test(value)));
+  assert.ok(setCookies.every((value) => /; samesite=none/i.test(value)));
+  assert.ok(setCookies.every((value) => /; partitioned/i.test(value)));
   const cookie = setCookies.map((value) => value.split(";", 1)[0]).join("; ");
+
+  const status = await fetch(`http://127.0.0.1:${PROJECT_PORT}/api/auth/status`, {
+    headers: { cookie, "x-forwarded-proto": "https" },
+  });
+  assert.equal((await status.json()).authenticated, true);
 
   const response = await fetch(`http://127.0.0.1:${PROJECT_PORT}/api/dashboard-data`, {
     headers: { cookie },
